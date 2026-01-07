@@ -1,0 +1,38 @@
+# Coconut training on GSM8k with Llama-3.2-1B
+# Based on paper: Stage 0 for 3 epochs, then 1 epoch per stage
+# c = 1 (one continuous thought token)
+
+project: coconut-llama
+save_path: ./checkpoints
+name: gsm-coconut-llama3.2-1b
+
+only_eval: False
+
+coconut: True
+cot: False
+no_thoughts: False
+no_cot: False
+
+# Paper setting: c = 1
+c_thought: 1
+stage_0_epochs: 3  # Stage 0 trains for 3 epochs (paper setting)
+epochs_per_stage: 1  # 1 epoch per stage after Stage 0
+max_latent_stage: 8  # Can adjust based on your needs
+pad_latent_to_max: True
+
+save_only_improve: False
+uniform_prob: 0.0
+model_id: unsloth/Llama-3.2-1B
+load_model_path: None  # Set to your SFT checkpoint if available
+seed: 0
+resume: 0
+bf16: True  # Use bfloat16 for Llama models
+train_path: data/gsm_train.json
+val_path: data/gsm_valid.json
+reset_optimizer: False
+batch_size_training: 8  # Adjust based on GPU memory
+debug: False
+gradient_accumulation_steps: 4  # Effective batch size = 8 * 4 = 32
+num_epochs: 11  # 3 epochs for Stage 0 + 8 stages * 1 epoch = 11 total
+lr: !!float "5e-5"
+weight_decay: 0.01

@@ -6,9 +6,37 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from collections import namedtuple
 from transformers.models.gpt2 import GPT2LMHeadModel
+from transformers.cache_utils import DynamicCache
 
 Outputs = namedtuple("Outputs", ["loss", "inputs_embeds", "logits"])
 MAX_N_LATENT = 8
+
+
+def _to_legacy_cache(cache):
+    """Convert DynamicCache to legacy tuple format."""
+    if cache is None:
+        return None
+    if isinstance(cache, (list, tuple)):
+        return cache
+    # Handle DynamicCache
+    legacy_cache = []
+    for layer_idx in range(len(cache)):
+        key_states = cache.key_cache[layer_idx]
+        value_states = cache.value_cache[layer_idx]
+        legacy_cache.append((key_states, value_states))
+    return legacy_cache
+
+
+def _from_legacy_cache(past_key_values):
+    """Convert legacy tuple format to DynamicCache."""
+    if past_key_values is None:
+        return None
+    if isinstance(past_key_values, DynamicCache):
+        return past_key_values
+    cache = DynamicCache()
+    for layer_idx, (key_states, value_states) in enumerate(past_key_values):
+        cache.update(key_states, value_states, layer_idx)
+    return cache
 
 
 class Coconut(nn.Module):
@@ -79,14 +107,17 @@ class Coconut(nn.Module):
                 hidden_states_offset = 0
 
             else:
-                # extract kv cache to reuse
-                past_key_values = [
+                # extract kv cache to reuse - convert to legacy format first for slicing
+                legacy_cache = _to_legacy_cache(kv_cache)
+                past_key_values_list = [
                     (
                         k[:, :, : next_compute_range[0], :],
                         v[:, :, : next_compute_range[0], :],
                     )
-                    for k, v in kv_cache
+                    for k, v in legacy_cache
                 ]
+                # convert back to DynamicCache for the model
+                past_key_values = _from_legacy_cache(past_key_values_list)
 
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -158,23 +189,25 @@ class Coconut(nn.Module):
             )
 
         # final pass
+        final_past_key_values = None
+        if kv_cache is not None:
+            legacy_cache = _to_legacy_cache(kv_cache)
+            past_key_values_list = [
+                (
+                    k[:, :, : next_compute_range[0], :],
+                    v[:, :, : next_compute_range[0], :],
+                )
+                for k, v in legacy_cache
+            ]
+            final_past_key_values = _from_legacy_cache(past_key_values_list)
+        
         outputs = self.base_causallm(
             inputs_embeds=inputs_embeds[
                 :, next_compute_range[0] : next_compute_range[1], :
             ],
             attention_mask=attention_mask[:, : next_compute_range[1]],
             position_ids=position_ids[:, next_compute_range[0] : next_compute_range[1]],
-            past_key_values=(
-                [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
-                if kv_cache
-                else None
-            ),
+            past_key_values=final_past_key_values,
             output_hidden_states=True,
         )
 

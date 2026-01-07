@@ -103,6 +103,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(configs.model_id)
     tokenizer = AutoTokenizer.from_pretrained(configs.model_id)
     tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"  # Required for DataLoader collator
     tokenizer.add_tokens("<|start-latent|>")
     tokenizer.add_tokens("<|end-latent|>")
     tokenizer.add_tokens("<|latent|>")
@@ -239,11 +240,20 @@ def main():
 
     collator = MyCollator(tokenizer, latent_id=latent_id, label_pad_token_id=-100)
 
+    # Support different epoch scheduling for Stage 0
+    # If stage_0_epochs is set, use it for Stage 0, then epochs_per_stage for subsequent stages
+    stage_0_epochs = getattr(configs, 'stage_0_epochs', configs.epochs_per_stage)
+
     for epoch in range(configs.resume, configs.num_epochs):
 
-        scheduled_stage = (
-            0 if (configs.cot or configs.no_cot) else epoch // configs.epochs_per_stage
-        )
+        if configs.cot or configs.no_cot:
+            scheduled_stage = 0
+        elif epoch < stage_0_epochs:
+            # Stage 0: first stage_0_epochs epochs
+            scheduled_stage = 0
+        else:
+            # Subsequent stages: 1 epoch per stage
+            scheduled_stage = (epoch - stage_0_epochs) // configs.epochs_per_stage + 1
         dataset_gen_val = get_question_latent_dataset(
             scheduled_stage,
             base_dataset_valid,
